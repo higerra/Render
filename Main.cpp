@@ -1,14 +1,17 @@
 #include "Mesh.h"
 #include "GLShader.h"
+#include <fstream>
 #define IMAGE_WIDTH 640
 #define IMAGE_HEIGHT 480
+#define camNum 100
+#define dynNum 54
 Mesh Object, hand;
 int rect_width;
 int rect_height;
 string texPath;
 string texPrefix;
 int curFrame = 0;
-int nextFrame = 1;
+int nextFrame = 5;
 Vector4f ImgCenter; //center of the image, used for calculate gluLookAt parameters
 
 //////////////////////////////////////////////////////////////////////////
@@ -18,7 +21,6 @@ static int outImgWidth, outImgHeight;
 static bool isWriting=false;
 static int faceNum=0;
 static int wringIdx=0;
-static int camNum = 20;
 static int textureIdx=0;
 static string imsavePath;
 static GLuint glutWindowHandle;
@@ -29,6 +31,15 @@ GLuint texture;
 static int TexNum;
 static Shader _shader;
 #define BUFFER_OFFSET(i) ((uchar*)NULL + (i))
+
+//for time-dependent rendering
+Mat mask;
+int maskwidth;
+int maskheight;
+Matrix4f referencePara;	//!! to be intergrated to mesh class
+Matrix4f intrinsic;		//!! to be intergrated to mesh class
+int dyn_curFrame = 0;
+
 void reshape(int w, int h);
 void renderScene();
 void getTexture(int curFrame,int nextFrame);
@@ -66,14 +77,40 @@ static int camviewport[4];
 void main(int argc, char** argv)
 {
 
-	camNum = 12;
-	TexNum = 12;
+	TexNum = camNum;
     imsavePath = "./";
-    sprintf(prefix,"D:/yanhang/texturemapping/room/data5.7_color");
+    sprintf(prefix,"D:/yanhang/RenderProject/room/data5.9_dyn_cap");
 
-	char offpath[100],geopath[100];
+	char offpath[100],geopath[100],maskpath[100];
 	sprintf(offpath,"%s/Mesh.off",prefix);
 	sprintf(geopath,"%s/Geometry",prefix);
+	sprintf(maskpath,"%s/image/frame_reference.png",prefix);
+
+	//read the reference frame and its parameter !!to be modified or deleted
+	mask = imread(maskpath);
+	if(!mask.data)
+	{
+		cout<<"cannot read the mask!"<<endl;
+		system("pause");
+		exit(-1);
+	}
+	flip(mask,mask,1);
+	cvtColor(mask,mask,CV_RGB2GRAY);
+	maskwidth = mask.cols;
+	maskheight = mask.rows;
+
+	char buffer[100];
+	sprintf(buffer,"%s/frame_reference.txt",geopath);
+	ifstream camerafin(buffer);
+    for(int y=0;y<4;y++)
+    {
+        for(int x=0;x<4;x++)
+            camerafin>>referencePara(y,x);
+    }
+	camerafin.close();
+	referencePara.transposeInPlace();
+
+	intrinsic<<599,0.0,319.5,0.0,0.0,599,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
 
 	hand = Mesh(string(offpath),geopath,camNum);
 
@@ -223,7 +260,18 @@ void renderScene()
 		isWriting=false;
 	}
 
+	glFlush();
 	glutSwapBuffers();
+}
+
+void idlefunc()	//used for animation
+{
+	waitKey(200);	//modulate the frame rate
+	dyn_curFrame++;
+	if(dyn_curFrame == dynNum)
+		dyn_curFrame = 0;
+	getTexture(curFrame,nextFrame);
+	renderScene();
 }
 
 void OpenGLshow(int argc, char** argv, const Mesh& m)
@@ -284,7 +332,8 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
     
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-    float znear = abs(scene_center[2])*0.01f;
+    //float znear = abs(scene_center[2])*0.01f;
+	float znear = 0.001;
 	float zfar = abs(scene_center[2]) + scene_size*30.f;
 	gluPerspective(45.0,(float)screenWidth/(float)screenHeight,znear,zfar);
 	glGetFloatv(GL_PROJECTION_MATRIX,camProjView);
@@ -325,12 +374,17 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 	glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_RGB,outImgWidth,outImgHeight,TexNum,0,GL_BGR,GL_UNSIGNED_BYTE,NULL);
 
 	char buffer[256];
-	for(int i=0;i<camNum;i++) {
+	for(int i=0;i<dynNum;i++) {
 
 		printf("reading texture...%d\n",i);
-		sprintf(buffer,"%s/image/frame%03d.png",prefix,i);
+		sprintf(buffer,"%s/image/dynarea%03d.png",prefix,i);
 		Mat TexImg = imread(buffer);
-		if(!TexImg.data) printf("can not read the image!\n");
+		if(!TexImg.data)
+		{
+			printf("can not read the image %d!\n",i);
+			system("pause");
+			exit(-1);
+		}
 		flip(TexImg,TexImg,1);
 		glTexSubImage3D(GL_TEXTURE_2D_ARRAY,0,0,0,i,TexImg.cols,TexImg.rows,1,GL_BGR,GL_UNSIGNED_BYTE,TexImg.data);
 	}
@@ -390,7 +444,7 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 	glutReshapeFunc(reshape);
 	glutSpecialFunc(processSpecialKeys);
 	glutDisplayFunc(renderScene);
-	glutIdleFunc(renderScene);
+	glutIdleFunc(idlefunc);
 	glutCloseFunc(close); //delete shader source
 	glutMainLoop();
 
@@ -436,11 +490,12 @@ void processSpecialKeys(int key, int x, int y)
     switch(key)
     {
         case GLUT_KEY_RIGHT:
-			isWriting = true;
+			//isWriting = true;
             if(move_count == 9 && nextFrame < camNum-1)
             {
-                curFrame++;
-                nextFrame++;
+                curFrame += 5;
+                nextFrame += 5;
+
                 for(int i=0;i<6;i++)
                     currentlookat[i] = lookattable[curFrame][i];
                 for(int i=0;i<6;i++)
@@ -452,14 +507,14 @@ void processSpecialKeys(int key, int x, int y)
 				move_count++;
 			}
             updateView();
-			getTexture(curFrame,nextFrame);
+			//getTexture(curFrame,nextFrame);
             glutPostRedisplay();
             break;
         case GLUT_KEY_LEFT:
             if(curFrame == 0)
                 break;
-            curFrame--;
-            nextFrame--;
+            curFrame -= 5;
+            nextFrame -= 5;
 			getTexture(curFrame,nextFrame);
             for(int i=0;i<6;i++)
                 currentlookat[i] = lookattable[curFrame][i];
@@ -494,8 +549,8 @@ void close()
 
 bool isValid(Vector2i imagePoint)
 {
-	if(imagePoint[0]>=2 && imagePoint[0]<IMAGE_WIDTH-2
-		&& imagePoint[1]>=2 && imagePoint[1]<IMAGE_HEIGHT-2)
+	if(imagePoint[0]>=0 && imagePoint[0]<IMAGE_WIDTH
+		&& imagePoint[1]>=0 && imagePoint[1]<IMAGE_HEIGHT)
 		return 1;
 	else 
 		return 0;
@@ -503,8 +558,8 @@ bool isValid(Vector2i imagePoint)
 
 Vector2i getimagePoint(Vector3f worldPoint,int camId)
 {
-	Matrix4f intri = hand.cameraParameters[camId].intrinsic;
-	Matrix4f exter = hand.cameraParameters[camId].external;
+	Matrix4f intri = intrinsic;
+	Matrix4f exter = referencePara;
 
 	Vector4f worldPoint_homo(worldPoint[0],worldPoint[1],worldPoint[2],1);
 
@@ -523,28 +578,31 @@ float distance(int camId)
 
 void getTexture(int cur,int next)
 {
-	cout<<cur<<' '<<next<<endl;
-	float weight_1 = distance(next);
-	float weight_2 = distance(cur);
-
+	//float weight_1 = distance(next);
+	//float weight_2 = distance(cur);
 	for(int i=0;i<hand.edges.size();i++)
 	{
 		int tmp = hand.edges[i].vertex;
 		
-		Vector2i imagePoint1 = getimagePoint(hand.getVertex()[tmp].pos,cur);
-		Vector2i imagePoint2 = getimagePoint(hand.getVertex()[tmp].pos,next);
-
+		Vector2i imagePoint1 = getimagePoint(hand.getVertex()[tmp].pos,cur);	//project the vertex to the reference view, cur is useless here
+		//Vector2i imagePoint2 = getimagePoint(hand.getVertex()[tmp].pos,next);
+		
+		hand.edges[i].texMap.weight1 = 0.0;
+		hand.edges[i].texMap.weight2 = 0.0;
 
 		if(isValid(imagePoint1))
 		{
-			hand.edges[i].texMap.u1 = imagePoint1[0];
-			hand.edges[i].texMap.v1 = imagePoint1[1];
-			hand.edges[i].texMap.PicIndex1 = cur;
-			hand.edges[i].texMap.weight1 = weight_1;
+			int locmask = static_cast<int>(mask.at<uchar>(imagePoint1[1],imagePoint1[0]));
+			if(locmask == 255)
+			{
+				hand.edges[i].texMap.u1 = imagePoint1[0];
+				hand.edges[i].texMap.v1 = imagePoint1[1];
+				hand.edges[i].texMap.PicIndex1 = dyn_curFrame;
+				hand.edges[i].texMap.weight1 = 1.0;
+			}
+		}
 
-		}else
-			hand.edges[i].texMap.weight1 = 0.0;
-		if(isValid(imagePoint2))
+		/*if(isValid(imagePoint2))
 		{
 			hand.edges[i].texMap.u2 = imagePoint2[0];
 			hand.edges[i].texMap.v2 = imagePoint2[1];
@@ -558,8 +616,9 @@ void getTexture(int cur,int next)
 		{
 			hand.edges[i].texMap.weight2 = hand.edges[i].texMap.weight2/sumweight;
 			hand.edges[i].texMap.weight1 = hand.edges[i].texMap.weight1/sumweight;
-		}
+		}*/
 	}
+
 	updateTexture();
 	glutPostRedisplay();
 }
