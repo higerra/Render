@@ -93,7 +93,6 @@ public:
 	Mesh(const Mesh& m);
 	Mesh operator=(const Mesh& m);
 	Mesh(const string& file, int camNum=0);
-    Mesh(const string file, char *cameraPath, int camNum = 0);
 
 	~Mesh() {
 		vertices.clear();
@@ -124,7 +123,6 @@ public:
 	vector<MeshEdge> edges;
 	vector<SkeletonJoint> skeleton;
 	vector<Vector2f> img_rect;
-    vector<cameraPara> cameraParameters;
 
 	Vector3f center;
 	float scene_size;

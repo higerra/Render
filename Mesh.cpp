@@ -52,58 +52,6 @@ Mesh::Mesh(const string& file, int camNum/*=0*/)
 #endif
 }
 
-Mesh::Mesh(const string file,char * cameraPath, int camNum)
-{
-    
-    ifstream camerafin;
-    cameraParameters.resize(camNum);
-    for(int i=0;i<camNum;i++)
-    {
-		cout<<"reading camera "<<i<<endl;
-        Matrix4f temp;
-        char buffer[100];
-        sprintf(buffer, "%s/frame%03d.txt",cameraPath,i);
-        
-        camerafin.open(buffer);
-        for(int y=0;y<4;y++)
-        {
-            for(int x=0;x<4;x++)
-                camerafin>>temp(y,x);
-        }
-        
-        temp(3,3) = 1;
-        
-
-        cameraParameters[i].external = temp.transpose();
-        
-        //cameraParameters[i].intrinsic<<521.6,0.0,319.5,0.0,0.0,521.6,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
-		//cameraParameters[i].intrinsic<<1086.433,0.0,639.5,0.0,0.0,1086.433,479.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
-		cameraParameters[i].intrinsic<<599,0.0,319.5,0.0,0.0,599,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
-        camerafin.close();
-    }
-    
-    
-    
-    cout<<"reading mesh: "<<file<<endl;
-    ifstream obj(file.c_str());
-    
-	if(!obj.is_open()) { printf("can not read the mesh file!\n"); return;}
-    
-	if(file.length() < 4)
-		return;
-    
-	if(string(file.end() - 4, file.end()) == string(".off"))
-		ReadOff(obj,camNum);
-	else if(string(file.end() - 5, file.end()) == string(".mesh"))
-		ReadMesh(obj, camNum);
-	else if(string(file.end() - 6, file.end()) == string(".dmesh"))
-		ReadMesh(obj,camNum);
-	else
-		return;
-    
-	obj.close();
-	computeVertexNormals();
-}
 
 Mesh::Mesh(const Mesh &m)
 {
@@ -113,7 +61,6 @@ Mesh::Mesh(const Mesh &m)
 	skeleton.assign(m.skeleton.begin(),m.skeleton.end());
 	img_rect.assign(m.img_rect.begin(),m.img_rect.end());
 
-	cameraParameters = m.cameraParameters;
 	// others
 	center = m.center;
 	scene_size = m.scene_size;
@@ -128,7 +75,6 @@ Mesh Mesh::operator=(const Mesh& m)
 		edges.assign(m.edges.begin(),m.edges.end());
 		skeleton.assign(m.skeleton.begin(),m.skeleton.end());
 		img_rect.assign(m.img_rect.begin(),m.img_rect.end());
-		cameraParameters = m.cameraParameters;
 		// others
 		center = m.center;
 		scene_size = m.scene_size;

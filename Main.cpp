@@ -4,15 +4,20 @@
 #define IMAGE_WIDTH 640
 #define IMAGE_HEIGHT 480
 #define camNum 100
+#define frameInterval 5
 #define dynNum 54
 #define videoLen 360
+
+bool is_dependent = false;
+
 Mesh Object, hand;
 int rect_width;
 int rect_height;
 string texPath;
 string texPrefix;
+int viewcount = camNum/frameInterval;		//different from 'camNum'
 int curFrame = 0;
-int nextFrame = 5;
+int nextFrame = 1;
 Vector4f ImgCenter; //center of the image, used for calculate gluLookAt parameters
 
 //////////////////////////////////////////////////////////////////////////
@@ -44,6 +49,9 @@ int maskheight;
 Matrix4f referencePara;	//!! to be intergrated to mesh class
 Matrix4f intrinsic;		//!! to be intergrated to mesh class
 int dyn_curFrame = 0;
+Vector2i getimagePoint(Vector3f worldPoint,int camId);
+Vector2i getvideoPoint(Vector3f worldPoint);
+
 
 void reshape(int w, int h);
 void renderScene();
@@ -54,9 +62,9 @@ void OpenGLshow(int argc, char** argv, const Mesh& m);
 void processSpecialKeys(int key, int x, int y);
 void processNormalKeys(unsigned char key,int x,int y);
 void close();
-Vector2i getimagePoint(Vector3f worldPoint,int camId);
 
 //for navigation
+vector <Matrix4f,aligned_allocator<Matrix4f>> camPara;
 void calculateDir(int cameraId,float *lookatMatrix);
 void updateView();
 
@@ -83,8 +91,7 @@ static int camviewport[4];
 void main(int argc, char** argv)
 {
 
-	TexNum = camNum;
-    imsavePath = "./";
+	TexNum = dynNum+viewcount;
     sprintf(prefix,"D:/yanhang/RenderProject/room/data5.9_dyn_cap");
 
 	char offpath[100],geopath[100],maskpath[100];
@@ -116,9 +123,9 @@ void main(int argc, char** argv)
 	camerafin.close();
 	referencePara.transposeInPlace();
 
-	intrinsic<<570,0.0,319.5,0.0,0.0,570,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
+	intrinsic<<575,0.0,319.5,0.0,0.0,575,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
 
-	hand = Mesh(string(offpath),geopath,camNum);
+	hand = Mesh(string(offpath),viewcount);
 
 	OpenGLshow(argc,argv,hand);
 }
@@ -303,11 +310,12 @@ void idlefunc()	//used for animation
 	if(dyn_curFrame == dynNum)
 		dyn_curFrame = 0;
 	getTexture(curFrame,nextFrame);
-	//isWriting = true;
+	isWriting = true;
 	renderScene();
-	//isWriting = false;
-	//renderScene();
+	isWriting = false;
+	renderScene();
 }
+
 
 void OpenGLshow(int argc, char** argv, const Mesh& m)
 {
@@ -346,32 +354,6 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_BACK);
 
-	// Set camera
-	scene_center = m.getMeshCenter();
-	scene_size = m.getSceneSize();
-
-	glViewport(0,0,screenWidth,screenHeight);
-	glGetIntegerv(GL_VIEWPORT,camviewport);
-    
-    for(int i=0;i<camNum;i++)
-        calculateDir(i,lookattable[i]);
-    
-    for(int i=0;i<6;i++)
-    {
-        currentlookat[i] = lookattable[curFrame][i];
-        difflookat[i] = (lookattable[nextFrame][i] - lookattable[curFrame][i])/10.0;
-    }
-    updateView();
-    
-    
-    
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-    //float znear = abs(scene_center[2])*0.01f;
-	float znear = 0.001;
-	float zfar = abs(scene_center[2]) + scene_size*30.f;
-	gluPerspective(45.0,(float)screenWidth/(float)screenHeight,znear,zfar);
-	glGetFloatv(GL_PROJECTION_MATRIX,camProjView);
     
 	
 	//////////////////////////////////////////////////////////////////////////
@@ -409,20 +391,82 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 	glTexImage3D(GL_TEXTURE_2D_ARRAY,0,GL_RGB,outImgWidth,outImgHeight,TexNum,0,GL_BGR,GL_UNSIGNED_BYTE,NULL);
 
 	char buffer[256];
-	for(int i=0;i<dynNum;i++) {
-
-		printf("reading texture...%d\n",i);
+	//read the dynamic area
+	for(int i=0;i<dynNum;i++) 
+	{
+		//printf("reading texture...%d\n",i);
 		sprintf(buffer,"%s/image/dynarea%03d.png",prefix,i);
 		Mat TexImg = imread(buffer);
 		if(!TexImg.data)
 		{
-			printf("can not read the image %d!\n",i);
+			printf("can not read the image %s!\n",buffer);
 			system("pause");
 			exit(-1);
 		}
 		flip(TexImg,TexImg,1);
 		glTexSubImage3D(GL_TEXTURE_2D_ARRAY,0,0,0,i,TexImg.cols,TexImg.rows,1,GL_BGR,GL_UNSIGNED_BYTE,TexImg.data);
 	}
+	//read the textures & camera Parameters
+	int texind = 0;
+	for(int i=0; texind<camNum; i++)
+	{
+		sprintf(buffer,"%s/image/frame%03d.png",prefix,texind);
+		Mat TexImg = imread(buffer);
+		if(!TexImg.data)
+		{
+			printf("can not read the image %s!\n",buffer);
+			system("pause");
+			exit(-1);
+		}
+		flip(TexImg,TexImg,1);
+		glTexSubImage3D(GL_TEXTURE_2D_ARRAY,0,0,0,i+dynNum,TexImg.cols,TexImg.rows,1,GL_BGR,GL_UNSIGNED_BYTE,TexImg.data);
+
+		sprintf(buffer,"%s/Geometry/frame%03d.txt",prefix,texind);
+		ifstream fin(buffer);
+		if(!fin)
+		{
+			printf("can not read the camera file: %s\n",buffer);
+			system("pause");
+			exit(-1);
+		}
+		Matrix4f temp;
+		for(int y=0;y<4;y++)
+        {
+            for(int x=0;x<4;x++)
+                fin>>temp(y,x);
+        }
+        temp(3,3) = 1;
+		camPara.push_back(temp.transpose());
+		texind = texind+frameInterval;
+	}
+
+
+	// Set camera
+	scene_center = m.getMeshCenter();
+	scene_size = m.getSceneSize();
+
+	glViewport(0,0,screenWidth,screenHeight);
+	glGetIntegerv(GL_VIEWPORT,camviewport);
+    
+    for(int i=0;i<viewcount;i++)
+        calculateDir(i,lookattable[i]);
+    
+    for(int i=0;i<6;i++)
+    {
+        currentlookat[i] = lookattable[curFrame][i];
+        difflookat[i] = (lookattable[nextFrame][i] - lookattable[curFrame][i])/10.0;
+    }
+    updateView();
+    
+    
+    
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+    //float znear = abs(scene_center[2])*0.01f;
+	float znear = 0.001;
+	float zfar = abs(scene_center[2]) + scene_size*30.f;
+	gluPerspective(45.0,(float)screenWidth/(float)screenHeight,znear,zfar);
+	glGetFloatv(GL_PROJECTION_MATRIX,camProjView);
 
 	//////////////////////////////////////////////////////////////////////////
 
@@ -501,8 +545,8 @@ void reshape(int w, int h)
 
 void calculateDir(int cameraId,float *lookatMatrix)
 {
-    Matrix4f extr = hand.cameraParameters[cameraId].external;
-    Matrix4f intr = hand.cameraParameters[cameraId].intrinsic;
+    Matrix4f extr = camPara[cameraId];
+    Matrix4f intr = intrinsic;
     
     Vector4f imgCenter_world_homo = extr.inverse()*intr.inverse()*ImgCenter;
 
@@ -528,6 +572,8 @@ void processNormalKeys(unsigned char key,int x,int y)
 		save();
 		exit(0);
 	}
+	if(key == 'd')
+		is_dependent = !is_dependent;
 }
 
 void processSpecialKeys(int key, int x, int y)
@@ -535,11 +581,10 @@ void processSpecialKeys(int key, int x, int y)
     switch(key)
     {
         case GLUT_KEY_RIGHT:
-			//isWriting = true;
-            if(move_count == 9 && nextFrame < camNum-1)
+            if(move_count == 9 && nextFrame < viewcount-1)
             {
-                curFrame += 5;
-                nextFrame += 5;
+                curFrame ++;
+                nextFrame ++;
 
                 for(int i=0;i<6;i++)
                     currentlookat[i] = lookattable[curFrame][i];
@@ -552,7 +597,7 @@ void processSpecialKeys(int key, int x, int y)
 				move_count++;
 			}
             updateView();
-			//getTexture(curFrame,nextFrame);
+			if(is_dependent) getTexture(curFrame,nextFrame);
             glutPostRedisplay();
             break;
         case GLUT_KEY_LEFT:
@@ -604,6 +649,18 @@ bool isValid(Vector2i imagePoint)
 Vector2i getimagePoint(Vector3f worldPoint,int camId)
 {
 	Matrix4f intri = intrinsic;
+	Matrix4f exter = camPara[camId];
+
+	Vector4f worldPoint_homo(worldPoint[0],worldPoint[1],worldPoint[2],1);
+	Vector4f imagePoint_homo = intri*exter*worldPoint_homo;
+	Vector2i imagePoint(static_cast<int>(imagePoint_homo[0]/imagePoint_homo[2]),static_cast<int>(imagePoint_homo[1]/imagePoint_homo[2]));
+
+	return imagePoint;
+}
+
+Vector2i getVideoPoint(Vector3f worldPoint)
+{
+	Matrix4f intri = intrinsic;
 	Matrix4f exter = referencePara;
 
 	Vector4f worldPoint_homo(worldPoint[0],worldPoint[1],worldPoint[2],1);
@@ -615,53 +672,70 @@ Vector2i getimagePoint(Vector3f worldPoint,int camId)
 
 float distance(int camId)
 {
-	float res = powf((currentlookat[0]-hand.cameraParameters[camId].external(0,3))*(currentlookat[0]-hand.cameraParameters[camId].external(0,3)) + 
-		(currentlookat[1]-hand.cameraParameters[camId].external(1,3))*(currentlookat[1]-hand.cameraParameters[camId].external(1,3)) + 
-		(currentlookat[2]-hand.cameraParameters[camId].external(2,3))*(currentlookat[2]-hand.cameraParameters[camId].external(2,3)),0.5);
+	float res = powf((currentlookat[0]-camPara[camId](0,3))*(currentlookat[0]-camPara[camId](0,3)) + 
+		(currentlookat[1]-camPara[camId](1,3))*(currentlookat[1]-camPara[camId](1,3)) + 
+		(currentlookat[2]-camPara[camId](2,3))*(currentlookat[2]-camPara[camId](2,3)),0.5);
 	return res;
 }
 
 void getTexture(int cur,int next)
 {
-	//float weight_1 = distance(next);
-	//float weight_2 = distance(cur);
 	for(int i=0;i<hand.edges.size();i++)
 	{
 		int tmp = hand.edges[i].vertex;
 		
-		Vector2i imagePoint1 = getimagePoint(hand.getVertex()[tmp].pos,cur);	//project the vertex to the reference view, cur is useless here
-		//Vector2i imagePoint2 = getimagePoint(hand.getVertex()[tmp].pos,next);
+		Vector2i videoPoint = getVideoPoint(hand.getVertex()[tmp].pos);
+
+		Vector2i imagePoint1 = getimagePoint(hand.getVertex()[tmp].pos,cur);
+		Vector2i imagePoint2 = getimagePoint(hand.getVertex()[tmp].pos,next);
 		
 		hand.edges[i].texMap.weight1 = 0.0;
 		hand.edges[i].texMap.weight2 = 0.0;
 
-		if(isValid(imagePoint1))
+		if(is_dependent)
 		{
-			int locmask = static_cast<int>(mask.at<uchar>(imagePoint1[1],imagePoint1[0]));
-			if(locmask == 255)
+			float weight_1 = distance(next);
+			float weight_2 = distance(cur);
+			if(isValid(imagePoint1))
 			{
 				hand.edges[i].texMap.u1 = imagePoint1[0];
 				hand.edges[i].texMap.v1 = imagePoint1[1];
+				hand.edges[i].texMap.PicIndex1 = cur + dynNum;
+				hand.edges[i].texMap.weight1 = weight_1;
+
+			}else
+				hand.edges[i].texMap.weight1 = 0.0;
+
+			if(isValid(imagePoint2))
+			{
+				hand.edges[i].texMap.u2 = imagePoint2[0];
+				hand.edges[i].texMap.v2 = imagePoint2[1];
+				hand.edges[i].texMap.PicIndex2 = next + dynNum;
+				hand.edges[i].texMap.weight2 = weight_2;
+			}else
+				hand.edges[i].texMap.weight2 = 0.0;
+
+			float sumweight =hand.edges[i].texMap.weight2 + hand.edges[i].texMap.weight1;
+			if(sumweight != 0)
+			{
+				hand.edges[i].texMap.weight2 = hand.edges[i].texMap.weight2/sumweight;
+				hand.edges[i].texMap.weight1 = hand.edges[i].texMap.weight1/sumweight;
+			}
+		}
+
+		if(isValid(videoPoint))
+		{
+			int locmask = static_cast<int>(mask.at<uchar>(videoPoint[1],videoPoint[0]));
+			if(locmask == 255)
+			{
+				hand.edges[i].texMap.weight2 = 0.0;
+				hand.edges[i].texMap.weight1 = 0.0;
+				hand.edges[i].texMap.u1 = videoPoint[0];
+				hand.edges[i].texMap.v1 = videoPoint[1];
 				hand.edges[i].texMap.PicIndex1 = dyn_curFrame;
 				hand.edges[i].texMap.weight1 = 1.0;
 			}
 		}
-
-		/*if(isValid(imagePoint2))
-		{
-			hand.edges[i].texMap.u2 = imagePoint2[0];
-			hand.edges[i].texMap.v2 = imagePoint2[1];
-			hand.edges[i].texMap.PicIndex2 = next;
-			hand.edges[i].texMap.weight2 = weight_2;
-		}else
-			hand.edges[i].texMap.weight2 = 0.0;
-
-		float sumweight = hand.edges[i].texMap.weight2 + hand.edges[i].texMap.weight1;
-		if(sumweight != 0)
-		{
-			hand.edges[i].texMap.weight2 = hand.edges[i].texMap.weight2/sumweight;
-			hand.edges[i].texMap.weight1 = hand.edges[i].texMap.weight1/sumweight;
-		}*/
 	}
 
 	updateTexture();
