@@ -19,6 +19,7 @@
 #pragma comment(lib, "opencv_features2d245d.lib")
 #pragma comment(lib, "opencv_flann245d.lib")
 #pragma comment(lib, "opencv_nonfree245d.lib")
+#pragma comment(lib, "opencv_video245d.lib")
 #else
 #pragma comment(lib, "opencv_core245.lib")
 #pragma comment(lib, "opencv_ml245.lib")
@@ -28,6 +29,7 @@
 #pragma comment(lib, "opencv_flann245.lib")
 #pragma comment(lib, "opencv_nonfree245.lib")
 #pragma comment(lib, "opencv_calib3d245.lib")
+#pragma comment(lib, "opencv_video245.lib")
 #endif
 
 //--------------------------------------------------------------

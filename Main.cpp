@@ -5,6 +5,7 @@
 #define IMAGE_HEIGHT 480
 #define camNum 100
 #define dynNum 54
+#define videoLen 360
 Mesh Object, hand;
 int rect_width;
 int rect_height;
@@ -32,6 +33,10 @@ static int TexNum;
 static Shader _shader;
 #define BUFFER_OFFSET(i) ((uchar*)NULL + (i))
 
+//for saving useage
+vector <Mat> saveImage;
+void save();
+
 //for time-dependent rendering
 Mat mask;
 int maskwidth;
@@ -47,6 +52,7 @@ void getTexture(int curFrame,int nextFrame);
 void data2GPU(const Mesh& m);
 void OpenGLshow(int argc, char** argv, const Mesh& m);
 void processSpecialKeys(int key, int x, int y);
+void processNormalKeys(unsigned char key,int x,int y);
 void close();
 Vector2i getimagePoint(Vector3f worldPoint,int camId);
 
@@ -110,13 +116,43 @@ void main(int argc, char** argv)
 	camerafin.close();
 	referencePara.transposeInPlace();
 
-	intrinsic<<599,0.0,319.5,0.0,0.0,599,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
+	intrinsic<<570,0.0,319.5,0.0,0.0,570,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
 
 	hand = Mesh(string(offpath),geopath,camNum);
 
 	OpenGLshow(argc,argv,hand);
 }
 
+void save()
+{
+	cout<<"Saving..."<<endl;
+	if(saveImage.size() == 0)
+	{
+		cout<<"Saving array is empty!"<<endl;
+		return;
+	}
+	char buffer[100];
+	sprintf(buffer,"%s/output.avi",prefix);
+	VideoWriter vWriter(string(buffer),-1,12.0,saveImage[0].size(),1);
+	for(int i=0;i<saveImage.size();i++)
+	{
+		vWriter<<saveImage[i];
+		waitKey(10);
+	}
+	char isSaveFrame;
+	cout<<"Save individual frame? (y/n)"<<endl;
+	isSaveFrame = getchar();
+	if(isSaveFrame == 'y')
+	{
+		for(int i=0;i<saveImage.size();i++)
+		{
+			char imgbuffer[100];
+			sprintf(imgbuffer,"%s/saveFrame/frame%03d.png",prefix,i);
+			imwrite(imgbuffer,saveImage[i]);
+		}
+	}
+	cout<<"Save Complete!"<<endl;
+}
 //////////////////////////////////////////////////////////////////////////
 // for showing
 void data2GPU(const Mesh& m)
@@ -234,7 +270,7 @@ void renderScene()
 
 	_shader.DisableShader();
 
-	if(isWriting) {			
+	if(isWriting && saveImage.size() <= videoLen) {			
 		// the three sentences are referred to: http://www.opengl.org/wiki/GL_EXT_framebuffer_multisample
 		// Yangang, 2013/02/26
 		//
@@ -252,11 +288,7 @@ void renderScene()
 		glReadPixels(0,0,outImgWidth,outImgHeight,GL_BGR_EXT,GL_UNSIGNED_BYTE,ImgGL.data);
 		cv::flip(ImgGL,ImgGL,0);
 
-		char buffer[512];
-		sprintf(buffer,"%s/view_%04d.png",imsavePath.c_str(),wringIdx);
-		cv::imwrite(buffer,ImgGL);
-		printf("saving images, success!\n");
-		wringIdx++;
+		saveImage.push_back(ImgGL);
 		isWriting=false;
 	}
 
@@ -271,7 +303,10 @@ void idlefunc()	//used for animation
 	if(dyn_curFrame == dynNum)
 		dyn_curFrame = 0;
 	getTexture(curFrame,nextFrame);
+	//isWriting = true;
 	renderScene();
+	//isWriting = false;
+	//renderScene();
 }
 
 void OpenGLshow(int argc, char** argv, const Mesh& m)
@@ -443,6 +478,7 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 
 	glutReshapeFunc(reshape);
 	glutSpecialFunc(processSpecialKeys);
+	glutKeyboardFunc(processNormalKeys);
 	glutDisplayFunc(renderScene);
 	glutIdleFunc(idlefunc);
 	glutCloseFunc(close); //delete shader source
@@ -483,6 +519,15 @@ void updateView()
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     gluLookAt((GLdouble)currentlookat[0], -1*(GLdouble)currentlookat[1], (GLdouble)currentlookat[2], (GLdouble)currentlookat[3], (GLdouble)currentlookat[4], (GLdouble)currentlookat[5], 0.0, -1.0, 0.0);
+}
+
+void processNormalKeys(unsigned char key,int x,int y)
+{
+	if(key == 27)
+	{
+		save();
+		exit(0);
+	}
 }
 
 void processSpecialKeys(int key, int x, int y)
