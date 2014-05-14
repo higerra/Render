@@ -1,4 +1,4 @@
-#include "Mesh.h"
+#include "_external_files.h"
 #include "GLShader.h"
 #include <fstream>
 #define IMAGE_WIDTH 640
@@ -10,7 +10,8 @@
 
 bool is_dependent = false;
 
-Mesh Object, hand;
+TriMesh model;
+
 int rect_width;
 int rect_height;
 string texPath;
@@ -19,7 +20,7 @@ int viewcount = camNum/frameInterval;		//different from 'camNum'
 int curFrame = 0;
 int nextFrame = 1;
 Vector4f ImgCenter; //center of the image, used for calculate gluLookAt parameters
-
+vector <TEXCOORD> texcoordinate;
 //////////////////////////////////////////////////////////////////////////
 // OpenGL
 static int screenWidth, screenHeight;
@@ -46,8 +47,8 @@ void save();
 Mat mask;
 int maskwidth;
 int maskheight;
-Matrix4f referencePara;	//!! to be intergrated to mesh class
-Matrix4f intrinsic;		//!! to be intergrated to mesh class
+Matrix4f referencePara;
+Matrix4f intrinsic;
 int dyn_curFrame = 0;
 Vector2i getimagePoint(Vector3f worldPoint,int camId);
 Vector2i getvideoPoint(Vector3f worldPoint);
@@ -57,14 +58,16 @@ void reshape(int w, int h);
 void renderScene();
 void getTexture(int curFrame,int nextFrame);
 
-void data2GPU(const Mesh& m);
-void OpenGLshow(int argc, char** argv, const Mesh& m);
+void data2GPU();
+void OpenGLshow(int argc, char** argv);
 void processSpecialKeys(int key, int x, int y);
 void processNormalKeys(unsigned char key,int x,int y);
 void close();
 
 //for navigation
 vector <Matrix4f,aligned_allocator<Matrix4f>> camPara;
+Vector3f calculateCenter(TriMesh m);
+float calculateSize(TriMesh m);
 void calculateDir(int cameraId,float *lookatMatrix);
 void updateView();
 
@@ -125,9 +128,19 @@ void main(int argc, char** argv)
 
 	intrinsic<<575,0.0,319.5,0.0,0.0,575,239.5,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,1.0;
 
-	hand = Mesh(string(offpath),viewcount);
+	//read the mesh
+	cout<<"reading mesh "<<offpath<<endl;
+	model.request_vertex_colors();
+	if(!OpenMesh::IO::read_mesh(model,string(offpath)))
+	{
+		cout<<"Cannot open the mesh!"<<endl;
+		system("pause");
+		exit(-1);
+	}
+	cout<<"reading complete!"<<endl;
 
-	OpenGLshow(argc,argv,hand);
+	texcoordinate.resize(model.n_faces()*3);
+	OpenGLshow(argc,argv);
 }
 
 void save()
@@ -162,30 +175,41 @@ void save()
 }
 //////////////////////////////////////////////////////////////////////////
 // for showing
-void data2GPU(const Mesh& m)
+void data2GPU()
 {
 	// vertex position
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[1]);
 	GLfloat* glVerPos = (GLfloat*)glMapBuffer(GL_ARRAY_BUFFER,GL_READ_WRITE);
-#pragma omp parallel for
-	for(int i=0;i<m.edges.size();i++) {
-		int tmp = m.edges[i].vertex;
-		glVerPos[i*3+0] = (GLfloat)m.getVertex()[tmp].pos[0];
-		glVerPos[i*3+1] = (GLfloat)m.getVertex()[tmp].pos[1];
-		glVerPos[i*3+2] = (GLfloat)m.getVertex()[tmp].pos[2];
+//#pragma omp parallel for
+	int i = 0;
+	for(TriMesh::FaceIter f_it = model.faces_begin(); f_it!=model.faces_end(); ++f_it)
+	{
+		for(TriMesh::FaceVertexIter fv_it = model.fv_iter(f_it);fv_it;++fv_it)
+		{
+			TriMesh::Point curpt = model.point(fv_it);
+			glVerPos[i*3+0] = (GLfloat)curpt[0];
+			glVerPos[i*3+1] = (GLfloat)curpt[1];
+			glVerPos[i*3+2] = (GLfloat)curpt[2];
+			i++;
+		}
 	}
 	glUnmapBuffer(GL_ARRAY_BUFFER);
 
-	//independent texture
+	//independent color
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[5]);
-	GLfloat* glVerIndTex = (GLfloat*)glMapBuffer(GL_ARRAY_BUFFER,GL_READ_WRITE);
-#pragma omp parallel for
-	for(int i=0;i<m.edges.size();i++) {
-		int tmp = m.edges[i].vertex;
-		glVerIndTex[i*4+0] = (GLfloat)(m.getVertex()[tmp].color[0]/255.0);
-		glVerIndTex[i*4+1] = (GLfloat)(m.getVertex()[tmp].color[1]/255.0);
-		glVerIndTex[i*4+2] = (GLfloat)(m.getVertex()[tmp].color[2]/255.0);
-		glVerIndTex[i*4+3] = 1.0;
+	GLfloat* glIndColor = (GLfloat*)glMapBuffer(GL_ARRAY_BUFFER,GL_READ_WRITE);
+//#pragma omp parallel for
+	i = 0;
+	for(TriMesh::FaceIter f_it = model.faces_begin(); f_it!=model.faces_end(); ++f_it)
+	{
+		for(TriMesh::FaceVertexIter fv_it = model.fv_iter(f_it);fv_it;++fv_it,++i)
+		{
+			TriMesh::Color curcolor = model.color(fv_it);
+			glIndColor[i*4+0] = (GLfloat)curcolor[0]/255.0;
+			glIndColor[i*4+1] = (GLfloat)curcolor[1]/255.0;
+			glIndColor[i*4+2] = (GLfloat)curcolor[2]/255.0;
+			glIndColor[i*4+3] = (GLfloat)1.0;
+		}
 	}
 	glUnmapBuffer(GL_ARRAY_BUFFER);
 }
@@ -195,45 +219,41 @@ void updateTexture()
 	//texture coordinate 1
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[2]);
 	GLfloat* glVerTex1 = (GLfloat*)glMapBuffer(GL_ARRAY_BUFFER,GL_WRITE_ONLY);
-#pragma omp parallel for
-	for(int i=0;i<hand.edges.size();i++) {
-		glVerTex1[i*3+0] = (GLfloat)hand.edges[i].texMap.u1/float(outImgWidth);
-		glVerTex1[i*3+1] = (GLfloat)hand.edges[i].texMap.v1/float(outImgHeight);
-		glVerTex1[i*3+2] = (GLfloat)hand.edges[i].texMap.PicIndex1;
+//#pragma omp parallel for
+	for(int i=0;i!=texcoordinate.size();i++)
+	{
+		glVerTex1[i*3+0] = (GLfloat)(texcoordinate[i].u1)/float(outImgWidth);
+		glVerTex1[i*3+1] = (GLfloat)(texcoordinate[i].v1)/float(outImgHeight);
+		glVerTex1[i*3+2] = (GLfloat)texcoordinate[i].pic1;
 	}
 	glUnmapBuffer(GL_ARRAY_BUFFER);
 
 	//texutre coordinate 2
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[3]);
 	GLfloat* glVerTex2 = (GLfloat*)glMapBuffer(GL_ARRAY_BUFFER,GL_WRITE_ONLY);
-#pragma omp parallel for
-	for(int i=0;i<hand.edges.size();i++)
+//#pragma omp parallel for
+	for(int i=0;i!=texcoordinate.size();i++)
 	{
-		glVerTex2[i*3+0] = (GLfloat)hand.edges[i].texMap.u2/float(outImgWidth);
-		glVerTex2[i*3+1] = (GLfloat)hand.edges[i].texMap.v2/float(outImgHeight);
-		glVerTex2[i*3+2] = (GLfloat)hand.edges[i].texMap.PicIndex2;
+		glVerTex2[i*3+0] = (GLfloat)(texcoordinate[i].u2)/float(outImgWidth);
+		glVerTex2[i*3+1] = (GLfloat)(texcoordinate[i].v2)/float(outImgHeight);
+		glVerTex2[i*3+2] = (GLfloat)texcoordinate[i].pic2;
 	}
 	glUnmapBuffer(GL_ARRAY_BUFFER);
 
 	//weight
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[4]);
 	GLfloat* glVerBlending = (GLfloat*)glMapBuffer(GL_ARRAY_BUFFER,GL_WRITE_ONLY);
-#pragma omp parallel for
-	for(int i=0;i<hand.edges.size();i++)
+//#pragma omp parallel for
+	for(int i=0;i!=texcoordinate.size();i++)
 	{
-		glVerBlending[i*2+0] = (GLfloat)hand.edges[i].texMap.weight1;
-		glVerBlending[i*2+1] = (GLfloat)hand.edges[i].texMap.weight2;
-		if(hand.edges[i].texMap.PicIndex1 == -1)
-			glVerBlending[i*2+0] = 0.0f;
-		else if(hand.edges[i].texMap.PicIndex1 == -1)
-			glVerBlending[i*2+1] = 0.0f;
+		glVerBlending[i*2+0] = (GLfloat)texcoordinate[i].weight1;
+		glVerBlending[i*2+1] = (GLfloat)texcoordinate[i].weight2;
 	}
 	glUnmapBuffer(GL_ARRAY_BUFFER);
 }
 
 void renderScene()
 {
-	
 	if(isWriting) {
 		if(outImgWidth!=screenWidth||outImgHeight!=screenHeight) {
 			glBindFramebuffer(GL_FRAMEBUFFER,fbo[0]);
@@ -267,13 +287,13 @@ void renderScene()
 	glUniformMatrix4fv(Loc,1,false,camProjView);
 
 	Loc = glGetUniformLocation(_shader.GetProgramID(),"tex_array");
-	if(Loc==-1) printf("can not find tex_array\n");
+	if(Loc==-1) printf("can not find tex_array\n");	
 	glUniform1i(Loc,0); // Texture0
 	Loc = glGetUniformLocation(_shader.GetProgramID(),"TexNum");
 	glUniform1i(Loc,TexNum);
 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,bufferobject[0]);
-	glDrawElements(GL_TRIANGLES,faceNum,GL_UNSIGNED_INT,0);
+	glDrawElements(GL_TRIANGLES,model.n_faces()*3,GL_UNSIGNED_INT,0);
 
 	_shader.DisableShader();
 
@@ -310,14 +330,14 @@ void idlefunc()	//used for animation
 	if(dyn_curFrame == dynNum)
 		dyn_curFrame = 0;
 	getTexture(curFrame,nextFrame);
-	isWriting = true;
+	//isWriting = true;
 	renderScene();
-	isWriting = false;
-	renderScene();
+	//isWriting = false;
+	//renderScene();
 }
 
 
-void OpenGLshow(int argc, char** argv, const Mesh& m)
+void OpenGLshow(int argc, char** argv)
 {
 	//////////////////////////////////////////////////////////////////////////
 	// Init glut
@@ -329,7 +349,7 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 	glutInit(&argc,argv); 
 	glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGBA | GLUT_MULTISAMPLE);
 	glutInitWindowSize(screenWidth,screenHeight);
-	glutCreateWindow("Dmesh texture mapping rendering");
+	glutCreateWindow("Time-dependent & view-dependent render");
 
 	if (glewInit() != GLEW_OK)
 	{
@@ -442,8 +462,8 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 
 
 	// Set camera
-	scene_center = m.getMeshCenter();
-	scene_size = m.getSceneSize();
+	scene_center = calculateCenter(model);
+	scene_size = calculateSize(model);
 
 	glViewport(0,0,screenWidth,screenHeight);
 	glGetIntegerv(GL_VIEWPORT,camviewport);
@@ -456,16 +476,16 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
         currentlookat[i] = lookattable[curFrame][i];
         difflookat[i] = (lookattable[nextFrame][i] - lookattable[curFrame][i])/10.0;
     }
+
     updateView();
     
-    
-    
+   
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-    //float znear = abs(scene_center[2])*0.01f;
-	float znear = 0.001;
+    float znear = abs(scene_center[2])*0.01f;
+	//float znear = 0.001;
 	float zfar = abs(scene_center[2]) + scene_size*30.f;
-	gluPerspective(45.0,(float)screenWidth/(float)screenHeight,znear,zfar);
+	gluPerspective(60.0,(float)screenWidth/(float)screenHeight,znear,zfar);
 	glGetFloatv(GL_PROJECTION_MATRIX,camProjView);
 
 	//////////////////////////////////////////////////////////////////////////
@@ -473,51 +493,49 @@ void OpenGLshow(int argc, char** argv, const Mesh& m)
 	glGenBuffers(BUFFERNUM,bufferobject);
 	// face
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,bufferobject[0]);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER,m.edges.size()*sizeof(GLuint),NULL,GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER,3*model.n_faces()*sizeof(GLuint),NULL,GL_STATIC_DRAW);
 	GLuint* glFace = (GLuint*)glMapBuffer(GL_ELEMENT_ARRAY_BUFFER,GL_WRITE_ONLY);
-	faceNum = m.edges.size();
-	for(int i=0;i<faceNum;i++) {glFace[i] = i;}
+	for(int i=0;i<3*model.n_faces();i++) {glFace[i] = i;}
 	glUnmapBuffer(GL_ELEMENT_ARRAY_BUFFER);
 
 	// vertex position
 	GLuint loc;
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[1]);
-	glBufferData(GL_ARRAY_BUFFER,m.edges.size()*3*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER,model.n_faces()*9*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
 	loc = glGetAttribLocation(_shader.GetProgramID(),"position");
 	glEnableVertexAttribArray(loc);
 	glVertexAttribPointer(loc,3,GL_FLOAT,0,0,BUFFER_OFFSET(0));
 
 	//texture coord 1
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[2]);
-	glBufferData(GL_ARRAY_BUFFER,m.edges.size()*3*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER,model.n_faces()*9*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
 	loc = glGetAttribLocation(_shader.GetProgramID(),"texcoord1");	//u,v,pic
 	glEnableVertexAttribArray(loc);
 	glVertexAttribPointer(loc,3,GL_FLOAT,0,0,BUFFER_OFFSET(0));
 
 	//texture coord 2
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[3]);
-	glBufferData(GL_ARRAY_BUFFER,m.edges.size()*3*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER,model.n_faces()*9*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
 	loc = glGetAttribLocation(_shader.GetProgramID(),"texcoord2"); //u,v,pic
 	glEnableVertexAttribArray(loc);
 	glVertexAttribPointer(loc,3,GL_FLOAT,0,0,BUFFER_OFFSET(0));
 
-
 	//blending weight
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[4]);
-	glBufferData(GL_ARRAY_BUFFER,m.edges.size()*2*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER,model.n_faces()*6*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
 	loc = glGetAttribLocation(_shader.GetProgramID(),"weight"); //weight
 	glEnableVertexAttribArray(loc);
 	glVertexAttribPointer(loc,2,GL_FLOAT,0,0,BUFFER_OFFSET(0));
 
 	//view-independent color
 	glBindBuffer(GL_ARRAY_BUFFER,bufferobject[5]);
-	glBufferData(GL_ARRAY_BUFFER,m.edges.size()*4*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER,model.n_faces()*12*sizeof(GLfloat),NULL,GL_STATIC_DRAW);
 	loc = glGetAttribLocation(_shader.GetProgramID(),"mixcolor");
 	glEnableVertexAttribArray(loc);
 	glVertexAttribPointer(loc,4,GL_FLOAT,0,0,BUFFER_OFFSET(0));
 
-	data2GPU(m);
-
+	data2GPU();
+	updateTexture();
 	getTexture(curFrame,nextFrame);
 
 	glutReshapeFunc(reshape);
@@ -558,6 +576,37 @@ void calculateDir(int cameraId,float *lookatMatrix)
         lookatMatrix[i] = imgCenter_world_homo(i-3) - extr(i-3,3);
 }
 
+Vector3f calculateCenter(TriMesh m)
+{
+	Vector3f center(0.0,0.0,0.0);
+	for(TriMesh::VertexIter v_it = m.vertices_begin(); v_it!=m.vertices_end(); ++v_it)
+	{
+		TriMesh::Point curpt = m.point(v_it);
+		center[0] += curpt[0];
+		center[1] += curpt[1];
+		center[2] += curpt[2];
+	}
+	center = center/static_cast<float>(m.n_vertices() + 0.0);
+	return center;
+}
+
+float calculateSize(TriMesh m)
+{
+	float maxx=-9999.0,maxy=-9999.0,maxz=-9999.0,minx = 9999.0,miny = 9999.0,minz=9999.0;
+	for(TriMesh::VertexIter v_it = m.vertices_begin(); v_it!=m.vertices_end(); ++v_it)
+	{
+		TriMesh::Point curpt = m.point(v_it);
+		maxx = curpt[0]>maxx?curpt[0]:maxx;
+		maxy = curpt[1]>maxy?curpt[1]:maxy;
+		maxz = curpt[2]>maxz?curpt[2]:maxz;
+		minx = curpt[0]<minx?curpt[0]:minx;
+		miny = curpt[1]<miny?curpt[1]:miny;
+		minz = curpt[2]<minz?curpt[2]:minz;
+	}
+	Vector3f temp(maxx-minx,maxy-miny,maxz-minz);
+	float size = temp.maxCoeff();
+	return size;
+}
 void updateView()
 {
     glMatrixMode(GL_MODELVIEW);
@@ -651,7 +700,7 @@ Vector2i getimagePoint(Vector3f worldPoint,int camId)
 	Matrix4f intri = intrinsic;
 	Matrix4f exter = camPara[camId];
 
-	Vector4f worldPoint_homo(worldPoint[0],worldPoint[1],worldPoint[2],1);
+	Vector4f worldPoint_homo(worldPoint[0],worldPoint[1],worldPoint[2],1.0);
 	Vector4f imagePoint_homo = intri*exter*worldPoint_homo;
 	Vector2i imagePoint(static_cast<int>(imagePoint_homo[0]/imagePoint_homo[2]),static_cast<int>(imagePoint_homo[1]/imagePoint_homo[2]));
 
@@ -680,64 +729,58 @@ float distance(int camId)
 
 void getTexture(int cur,int next)
 {
-	for(int i=0;i<hand.edges.size();i++)
+	int i = 0;
+	for(TriMesh::FaceIter f_it = model.faces_begin(); f_it!=model.faces_end();++f_it)
 	{
-		int tmp = hand.edges[i].vertex;
-		
-		Vector2i videoPoint = getVideoPoint(hand.getVertex()[tmp].pos);
-
-		Vector2i imagePoint1 = getimagePoint(hand.getVertex()[tmp].pos,cur);
-		Vector2i imagePoint2 = getimagePoint(hand.getVertex()[tmp].pos,next);
-		
-		hand.edges[i].texMap.weight1 = 0.0;
-		hand.edges[i].texMap.weight2 = 0.0;
-
-		if(is_dependent)
+		for(TriMesh::FaceVertexIter fv_it = model.fv_iter(f_it);fv_it;++fv_it,++i)
 		{
-			float weight_1 = distance(next);
-			float weight_2 = distance(cur);
-			if(isValid(imagePoint1))
-			{
-				hand.edges[i].texMap.u1 = imagePoint1[0];
-				hand.edges[i].texMap.v1 = imagePoint1[1];
-				hand.edges[i].texMap.PicIndex1 = cur + dynNum;
-				hand.edges[i].texMap.weight1 = weight_1;
+			TriMesh::Point curpt = model.point(fv_it);
+		
+			Vector2i videoPoint = getVideoPoint(Vector3f(curpt[0],curpt[1],curpt[2]));
 
-			}else
-				hand.edges[i].texMap.weight1 = 0.0;
+			Vector2i imagePoint1 = getimagePoint(Vector3f(curpt[0],curpt[1],curpt[2]),cur);
+			Vector2i imagePoint2 = getimagePoint(Vector3f(curpt[0],curpt[1],curpt[2]),next);
+		
+			texcoordinate[i].weight1 = 0.0;
+			texcoordinate[i].weight2 = 0.0;
 
-			if(isValid(imagePoint2))
+			if(is_dependent)
 			{
-				hand.edges[i].texMap.u2 = imagePoint2[0];
-				hand.edges[i].texMap.v2 = imagePoint2[1];
-				hand.edges[i].texMap.PicIndex2 = next + dynNum;
-				hand.edges[i].texMap.weight2 = weight_2;
-			}else
-				hand.edges[i].texMap.weight2 = 0.0;
+				float weight_1 = distance(next);
+				float weight_2 = distance(cur);
+				if(isValid(imagePoint1))
+				{
+					texcoordinate[i].u1 = imagePoint1[0];
+					texcoordinate[i].v1 = imagePoint1[1];
+					texcoordinate[i].pic1 = cur + dynNum;
+					texcoordinate[i].weight1 = weight_1;
+				}
 
-			float sumweight =hand.edges[i].texMap.weight2 + hand.edges[i].texMap.weight1;
-			if(sumweight != 0)
-			{
-				hand.edges[i].texMap.weight2 = hand.edges[i].texMap.weight2/sumweight;
-				hand.edges[i].texMap.weight1 = hand.edges[i].texMap.weight1/sumweight;
+				if(isValid(imagePoint2))
+				{
+					texcoordinate[i].u2 = imagePoint2[0];
+					texcoordinate[i].v2 = imagePoint2[1];
+					texcoordinate[i].pic2 = next + dynNum;
+					texcoordinate[i].weight2 = weight_2;
+				}
+
 			}
-		}
 
-		if(isValid(videoPoint))
-		{
-			int locmask = static_cast<int>(mask.at<uchar>(videoPoint[1],videoPoint[0]));
-			if(locmask == 255)
+			if(isValid(videoPoint))
 			{
-				hand.edges[i].texMap.weight2 = 0.0;
-				hand.edges[i].texMap.weight1 = 0.0;
-				hand.edges[i].texMap.u1 = videoPoint[0];
-				hand.edges[i].texMap.v1 = videoPoint[1];
-				hand.edges[i].texMap.PicIndex1 = dyn_curFrame;
-				hand.edges[i].texMap.weight1 = 1.0;
+				int locmask = static_cast<int>(mask.at<uchar>(videoPoint[1],videoPoint[0]));
+				if(locmask > 200)
+				{
+					
+					texcoordinate[i].u1 = videoPoint[0];
+					texcoordinate[i].v1 = videoPoint[1];
+					texcoordinate[i].pic1 = dyn_curFrame;
+					texcoordinate[i].weight1 = 1.0;
+					texcoordinate[i].weight2 = 0.0;
+				}
 			}
 		}
 	}
-
 	updateTexture();
 	glutPostRedisplay();
 }

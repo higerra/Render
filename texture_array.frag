@@ -19,10 +19,12 @@ void main()
     vec3 texCoord1 = vec3(frag_tex1.xy,actual_layer1);
 	vec3 texCoord2 = vec3(frag_tex2.xy,actual_layer2);
     
+
 	if(frag_weight.s == 0.0 && frag_weight.t == 0.0)
 	{
 		frag_color = frag_mixcolor;
 	}else{
-		frag_color = frag_weight.s*texture2DArray(tex_array,texCoord1.xyz) + frag_weight.t*texture2DArray(tex_array,texCoord2.xyz);
+		float sum = frag_weight.s + frag_weight.t;
+		frag_color = frag_weight.s/sum*texture2DArray(tex_array,texCoord1.xyz) + frag_weight.t/sum*texture2DArray(tex_array,texCoord2.xyz);
 	}
 }
