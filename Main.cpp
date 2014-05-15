@@ -8,8 +8,8 @@
 #define dynNum 54
 #define videoLen 360
 
-bool is_dependent = false;
-
+bool is_viewdependent = false;
+bool is_timedependent = false;
 TriMesh model;
 
 int rect_width;
@@ -202,16 +202,21 @@ void data2GPU()
 	i = 0;
 	for(TriMesh::FaceIter f_it = model.faces_begin(); f_it!=model.faces_end(); ++f_it)
 	{
-		for(TriMesh::FaceVertexIter fv_it = model.fv_iter(f_it);fv_it;++fv_it,++i)
+		for(TriMesh::FaceVertexIter fv_it = model.fv_iter(f_it);fv_it;++fv_it)
 		{
 			TriMesh::Color curcolor = model.color(fv_it);
-			glIndColor[i*4+0] = (GLfloat)curcolor[0]/255.0;
-			glIndColor[i*4+1] = (GLfloat)curcolor[1]/255.0;
-			glIndColor[i*4+2] = (GLfloat)curcolor[2]/255.0;
+			//cout<<fv_it->idx()<<' ';
+			glIndColor[i*4+0] = (GLfloat)(curcolor[0]/255.0);
+			glIndColor[i*4+1] = (GLfloat)(curcolor[1]/255.0);
+			glIndColor[i*4+2] = (GLfloat)(curcolor[2]/255.0);
 			glIndColor[i*4+3] = (GLfloat)1.0;
+			i++;
 		}
+		//cout<<endl;
 	}
 	glUnmapBuffer(GL_ARRAY_BUFFER);
+
+	
 }
 
 void updateTexture()
@@ -349,6 +354,7 @@ void OpenGLshow(int argc, char** argv)
 	glutInit(&argc,argv); 
 	glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGBA | GLUT_MULTISAMPLE);
 	glutInitWindowSize(screenWidth,screenHeight);
+	glutInitWindowPosition(300,300);
 	glutCreateWindow("Time-dependent & view-dependent render");
 
 	if (glewInit() != GLEW_OK)
@@ -482,10 +488,9 @@ void OpenGLshow(int argc, char** argv)
    
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-    float znear = abs(scene_center[2])*0.01f;
-	//float znear = 0.001;
-	float zfar = abs(scene_center[2]) + scene_size*30.f;
-	gluPerspective(60.0,(float)screenWidth/(float)screenHeight,znear,zfar);
+    float znear = abs(scene_center[2]);
+	float zfar = abs(scene_center[2]) + scene_size;
+	gluPerspective(32.0,(float)screenWidth/(float)screenHeight,znear,zfar);
 	glGetFloatv(GL_PROJECTION_MATRIX,camProjView);
 
 	//////////////////////////////////////////////////////////////////////////
@@ -611,7 +616,7 @@ void updateView()
 {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    gluLookAt((GLdouble)currentlookat[0], -1*(GLdouble)currentlookat[1], (GLdouble)currentlookat[2], (GLdouble)currentlookat[3], (GLdouble)currentlookat[4], (GLdouble)currentlookat[5], 0.0, -1.0, 0.0);
+    gluLookAt((GLdouble)currentlookat[0], -1*(GLdouble)currentlookat[1], (GLdouble)currentlookat[2], (GLdouble)currentlookat[3], -1*(GLdouble)currentlookat[4], (GLdouble)currentlookat[5], 0.0, -1.0, 0.0);
 }
 
 void processNormalKeys(unsigned char key,int x,int y)
@@ -622,7 +627,9 @@ void processNormalKeys(unsigned char key,int x,int y)
 		exit(0);
 	}
 	if(key == 'd')
-		is_dependent = !is_dependent;
+		is_viewdependent = !is_viewdependent;
+	if(key == 't')
+		is_timedependent = !is_timedependent;
 }
 
 void processSpecialKeys(int key, int x, int y)
@@ -646,7 +653,7 @@ void processSpecialKeys(int key, int x, int y)
 				move_count++;
 			}
             updateView();
-			if(is_dependent) getTexture(curFrame,nextFrame);
+			if(is_viewdependent) getTexture(curFrame,nextFrame);
             glutPostRedisplay();
             break;
         case GLUT_KEY_LEFT:
@@ -744,7 +751,7 @@ void getTexture(int cur,int next)
 			texcoordinate[i].weight1 = 0.0;
 			texcoordinate[i].weight2 = 0.0;
 
-			if(is_dependent)
+			if(is_viewdependent)
 			{
 				float weight_1 = distance(next);
 				float weight_2 = distance(cur);
@@ -766,17 +773,20 @@ void getTexture(int cur,int next)
 
 			}
 
-			if(isValid(videoPoint))
+			if(is_timedependent)
 			{
-				int locmask = static_cast<int>(mask.at<uchar>(videoPoint[1],videoPoint[0]));
-				if(locmask > 200)
+				if(isValid(videoPoint))
 				{
+					int locmask = static_cast<int>(mask.at<uchar>(videoPoint[1],videoPoint[0]));
+					if(locmask > 200)
+					{
 					
-					texcoordinate[i].u1 = videoPoint[0];
-					texcoordinate[i].v1 = videoPoint[1];
-					texcoordinate[i].pic1 = dyn_curFrame;
-					texcoordinate[i].weight1 = 1.0;
-					texcoordinate[i].weight2 = 0.0;
+						texcoordinate[i].u1 = videoPoint[0];
+						texcoordinate[i].v1 = videoPoint[1];
+						texcoordinate[i].pic1 = dyn_curFrame;
+						texcoordinate[i].weight1 = 1.0;
+						texcoordinate[i].weight2 = 0.0;
+					}
 				}
 			}
 		}
